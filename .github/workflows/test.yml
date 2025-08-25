@@ -1,0 +1,64 @@
+name: Test
+
+on: push
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        luaVersion: ["5.4", "5.5"]
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+
+    steps:
+    - name: Setup MSVC
+      uses: step-security/msvc-dev-cmd@v1
+      if: ${{ runner.os == 'Windows' }}
+
+    - name: Clone libbz2
+      run: cd "${{ runner.temp }}" && git clone https://gitlab.com/bzip2/bzip2.git
+
+    - name: Generate a libbz2 tarball from the source in the workspace
+      run: cd "${{ runner.temp }}" && cd bzip2 && git archive "--format=tar.gz" -o "${{ github.workspace }}/bzip2.tar.gz" "--prefix=bzip2/" master
+
+    - name: Extract libbz2
+      run: tar -xf bzip2.tar.gz
+
+    - name: Configure libbz2 (Unix)
+      if: ${{ runner.os != 'Windows' }}
+      run: cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED_LIB=ON -DENABLE_LIB_ONLY=ON -S bzip2 -B build
+
+    - name: Configure libbz2 (Windows)
+      if: ${{ runner.os == 'Windows' }}
+      run: cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED_LIB=ON -DENABLE_LIB_ONLY=ON --install-prefix C:\external -S bzip2 -B build
+
+    - name: Build libbz2
+      run: cmake --build build --config Release
+
+    - name: Install libbz2 (Unix)
+      if: ${{ runner.os != 'Windows' }}
+      run: sudo cmake --install build --config Release
+
+    - name: Install libbz2 (Windows)
+      if: ${{ runner.os == 'Windows' }}
+      run: cmake --install build --config Release
+
+    - name: Copy bz2.dll to the correct location and add C:\external\bin to PATH env var (Windows)
+      if: ${{ runner.os == 'Windows' }}
+      shell: cmd
+      run: |
+        copy C:\external\lib\bz2.dll C:\external\bin
+        echo C:\external\bin>>${{ github.path }}
+
+    - name: Install Lua
+      uses: luarocks/gh-actions-lua@master
+      with:
+        luaVersion: ${{ matrix.luaVersion }}
+
+    - name: Install LuaRocks
+      uses: luarocks/gh-actions-luarocks@master
+
+    - name: Install lua-bz2
+      run: luarocks install lua-bz2
+
