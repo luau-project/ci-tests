@@ -1,0 +1,50 @@
+name: LuaRocks issue 1852 2nd run
+
+on: push
+
+jobs:
+  ubuntu-or-macos:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/cache@v5
+        with:
+          path: '/tmp/my-cache/*.tar.gz'
+          key: tarballs
+
+      - name: Install Lua dependencies
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo apt install -y libreadline-dev
+
+      - name: Reproduce LuaRocks issue 1852
+        run: sh issue.sh
+
+  freebsd:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Reproduce LuaRocks issue 1852
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y gmake
+            pkg install -y curl
+          run: sh issue.sh
