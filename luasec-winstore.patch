@@ -1,0 +1,135 @@
+diff --git a/luasec-1.3.2-1.rockspec b/luasec-1.3.2-1.rockspec
+index 5971f7c..4bd79f5 100644
+--- a/luasec-1.3.2-1.rockspec
++++ b/luasec-1.3.2-1.rockspec
+@@ -88,7 +88,7 @@ build = {
+                   "$(OPENSSL_BINDIR)",
+                },
+                libraries = {
+-                  "libssl", "libcrypto", "ws2_32"
++                  "libssl", "libcrypto", "ws2_32", "crypt32"
+                },
+                incdirs = {
+                   "$(OPENSSL_INCDIR)", "src/", "src/luasocket"
+diff --git a/src/context.c b/src/context.c
+index 881ebb9..5b7f09f 100644
+--- a/src/context.c
++++ b/src/context.c
+@@ -10,6 +10,7 @@
+ 
+ #if defined(WIN32)
+ #include <windows.h>
++#include <wincrypt.h>
+ #endif
+ 
+ #include <openssl/ssl.h>
+@@ -350,6 +351,85 @@ static int create(lua_State *L)
+   return 1;
+ }
+ 
++#if defined(WIN32)
++static int load_os_certs(lua_State * L)
++{
++  HCERTSTORE win_store;
++  PCCERT_CONTEXT win_ctx;
++  X509 *cert;
++  X509_STORE *cert_store;
++  const unsigned char *encoded_cert;
++  SSL_CTX *ctx = lsec_checkcontext(L, 1);
++  const char *store_name = "ROOT";
++  win_store = CertOpenSystemStoreA(
++    /* [in] HCRYPTPROV_LEGACY hProv:
++              this parameter is not used and should be set to 0 */
++    0,
++    /* [in] LPCSTR szSubsystemProtocol:
++              a string that names a system store */
++    store_name
++  );
++  if (win_store == NULL)
++  {
++    lua_pushboolean(L, 0);
++    lua_pushstring(L, "Failed to open system store.");
++    return 2;
++  }
++  cert_store = SSL_CTX_get_cert_store(ctx);
++  if (cert_store == NULL)
++  {
++    CertCloseStore(win_store, 0);
++    lua_pushboolean(L, 0);
++    lua_pushstring(L, "Failed to get certificate store for the context.");
++    return 2;
++  }
++  win_ctx = NULL; /* must be explictly set to NULL */
++  while ((win_ctx = CertFindCertificateInStore(
++    /* [in] HCERTSTORE hCertStore:
++              a handle of the certificate
++              store to be searched */
++    win_store,
++    /* [in] DWORD dwCertEncodingType:
++              the type of encoding used */
++    X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
++    /* [in] DWORD dwFindFlags:
++              used with some dwFindType values
++              to modify the search criteria */
++    0,
++    /* [in] DWORD dwFindType:
++              specifies the type of search
++              being made */
++    CERT_FIND_ANY,
++    /* [in] const void *pvFindPara:
++              points to a data item or
++              structure used with dwFindType */
++    NULL,
++    /* [in] PCCERT_CONTEXT pPrevCertContext:
++              a pointer to the last CERT_CONTEXT
++              structure returned by this function */
++    win_ctx
++  )) != NULL)
++  {
++    encoded_cert = (const unsigned char *)win_ctx->pbCertEncoded;
++    cert = d2i_X509(NULL, &encoded_cert, (long)win_ctx->cbCertEncoded);
++
++    if (cert != NULL)
++    {
++      if (X509_STORE_add_cert(cert_store, cert) != 1)
++      {
++        CertCloseStore(win_store, 0);
++        lua_pushboolean(L, 0);
++        lua_pushstring(L, "Failed to add winstore certificate to the context.");
++        return 2;
++      }
++    }
++  }
++  CertCloseStore(win_store, 0);
++  lua_pushboolean(L, 1);
++  return 1;
++}
++#endif
++
+ /**
+  * Load the trusting certificates.
+  */
+@@ -885,6 +965,9 @@ static luaL_Reg funcs[] = {
+   {"create",          create},
+   {"locations",       load_locations},
+   {"loadcert",        load_cert},
++#if defined(WIN32)
++  {"loadoscerts",     load_os_certs},
++#endif
+   {"loadkey",         load_key},
+   {"checkkey",        check_key},
+   {"setalpn",         set_alpn},
+diff --git a/src/ssl.lua b/src/ssl.lua
+index e22c047..90c57dd 100644
+--- a/src/ssl.lua
++++ b/src/ssl.lua
+@@ -106,6 +106,9 @@ local function newcontext(cfg)
+    if cfg.cafile or cfg.capath then
+       succ, msg = context.locations(ctx, cfg.cafile, cfg.capath)
+       if not succ then return nil, msg end
++   elseif type(context.loadoscerts) == "function" and not cfg.nooscerts then
++      succ, msg = context.loadoscerts(ctx)
++      if not succ then return nil, msg end
+    end
+    -- Set SSL ciphers
+    if cfg.ciphers then
