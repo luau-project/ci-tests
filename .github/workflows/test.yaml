@@ -1,0 +1,39 @@
+name: Test
+
+on: push
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+      fail-fast: false
+      matrix:
+
+        toolchain:
+          - msvc
+          - gcc
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: step-security/msvc-dev-cmd@v1
+        if: matrix.toolchain == 'msvc'
+
+      - name: Build and test (MSVC)
+        if: matrix.toolchain == 'msvc'
+        run: |
+          SET "PREFIX=%PROGRAMFILES%\OpenSSL"
+          SET "PATH=%PREFIX%\bin;%PATH%"
+          nmake /F nmake.mk "PREFIX=%PREFIX%" "MULTILIB=lib\VC\x64\MD" clean all test
+
+      - name: Build and test (GCC)
+        if: matrix.toolchain == 'gcc'
+        run: |
+          SET "PREFIX=C:\mingw64\opt"
+          SET "PATH=%PREFIX%\bin;%PATH%"
+          mingw32-make "PREFIX=%PREFIX%" clean all test
